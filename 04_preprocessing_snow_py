@@ -1,0 +1,178 @@
+# ziel: vorübergehende Lösung (bevor integration in preprocessing), um die Schneedaten in die Datenbank zu schreiben
+
+# Anzahl Tage Schneehöhe 5cm/10cm/20cm pro Jahr werden benötigt
+
+import pandas as pd
+import sys
+import pymssql
+import os
+
+from datetime import datetime
+
+print("Packages importiert")
+
+importyear = 2023
+path_to_txt_file = r"...\txt_files\snow_grid\day\\"
+
+def get_files(path):    # Checkt, welche Files in Pfad vorhanden sind
+    for file in os.listdir(path):
+        if os.path.isfile(os.path.join(path, file)):
+            yield file
+
+cell_ids_styria_list = []
+#cell_ids_styria_list_raw = ['62332', '62333']
+
+for file in get_files(path_to_txt_file):      # extrahiert die IDs aller Dateien
+    data_length = len(file)
+    if data_length >= 15:
+        id = file[5:11]
+    else:
+        id = file[5:10]
+    cell_ids_styria_list.append(id)
+
+cnt = 0
+print(cell_ids_styria_list)
+
+def createYearArray(start, end):  # Kreiert eine Liste vom Startjahr bis Endjahr
+    yearArray_string = ""
+    yearArray.clear()  # Python 3
+    # yearArray[:] = []  # Python 2
+    for year in range(start, end):
+        yearArray_string = yearArray_string + str(year) + ','
+        yearArray.append(year)
+
+    return yearArray_string.rstrip(yearArray_string[-1])
+
+
+def YearandMonthCalc(row, time_type):  # Funktion für das Extrahieren der Jahre, Monate und Tage aus dem Timestamp
+    if time_type == "Year":
+        val = row["Time"].split("-")[0]
+        return int(val)
+    elif time_type == "Month":
+        val = row["Time"].split("-")[1]
+        return str(val)
+    elif time_type == "Day":
+        val = row["Time"].split("-")[2][:2]
+        return str(val)
+
+def CountDaysInYear(yeararray, df):
+    d = []
+    for year in yeararray:
+        df_05 = df[(df["Year"] == year) & (df["snow"] >= 0.05)]
+        df_10 = df[(df["Year"] == year) & (df["snow"] >= 0.10)]
+        df_20 = df[(df["Year"] == year) & (df["snow"] >= 0.20)]
+        d.append({
+            "Year": year,
+            "snow_05": df_05.shape[0],
+            "snow_10": df_10.shape[0],
+            "snow_20": df_20.shape[0]
+        })
+    return pd.DataFrame(d)
+
+def listmaker(df):
+    string_return_schneetage_05 = ""
+    string_return_schneetage_10 = ""
+    string_return_schneetage_20 = ""
+    for index, row in df.iterrows():
+        string_return_schneetage_05 = string_return_schneetage_05 + str(row["snow_05"]) + ","
+        string_return_schneetage_10 = string_return_schneetage_10 + str(row["snow_10"]) + ","
+        string_return_schneetage_20 = string_return_schneetage_20 + str(row["snow_20"]) + ","
+
+    string_return_schneetage_05 = string_return_schneetage_05.rstrip(string_return_schneetage_05[-1])
+    string_return_schneetage_10 = string_return_schneetage_10.rstrip(string_return_schneetage_10[-1])
+    string_return_schneetage_20 = string_return_schneetage_20.rstrip(string_return_schneetage_20[-1])
+
+    return string_return_schneetage_05, string_return_schneetage_10, string_return_schneetage_20
+
+def DreissigJahreVergleicher(input_string, datatype="int"):
+    input_list = list(map(int, input_string.split(",")))
+    avg_first6190 = round(sum(input_list[0:30])/len(input_list[0:30]), 1)
+    avg_last9120 = round(sum(input_list[30:60])/len(input_list[30:60]), 1)
+    avg_tm3 = round(input_list[-3])
+    avg_tm2 = round(input_list[-2])
+    avg_tm1 = round(input_list[-1])
+    return f"{avg_first6190},{avg_last9120},{avg_tm3},{avg_tm2},{avg_tm1}"
+
+def GetMaxValueAndDate(df, snow_limit):
+    print(df)
+    tagmaxschnee = df[snow_limit].max()
+    tagmax = df[df[snow_limit] == tagmaxschnee]["Day"].iloc[-1]
+    monatmax = df[df[snow_limit] == tagmaxschnee]["Month"].iloc[-1]
+    jahrmax = df[df[snow_limit] == tagmaxschnee]["Year"].iloc[-1]
+
+    datummax = f"{tagmax}.{monatmax}.{jahrmax}"
+
+    return datummax, tagmaxschnee
+
+yearArray = []
+#createYearArray(1961, importyear + 1)
+createYearArray(1961, importyear+1)
+
+for i in cell_ids_styria_list:
+    cell_id = i
+    cnt += 1
+    print(f"Schritt {cnt} von {len(cell_ids_styria_list)}")
+
+    try:
+        txt_file_snow = f"{path_to_txt_file}\\snow_{cell_id}.txt"
+        if os.path.getsize(txt_file_snow) == 0:
+            continue
+    except Exception as e:
+        print(e)
+        continue
+
+    data_snow = pd.read_table(txt_file_snow, names=["Time", "snow"], header=None, delimiter=";")
+
+    data_snow["Year"] = data_snow.apply(lambda row: YearandMonthCalc(row, "Year"), axis=1)
+    data_snow["Month"] = data_snow.apply(lambda row: YearandMonthCalc(row, "Month"), axis=1)
+    data_snow["Day"] = data_snow.apply(lambda row: YearandMonthCalc(row, "Day"), axis=1)
+
+    #print(data_snow)
+
+    df_schneetage = CountDaysInYear(yearArray, data_snow)
+
+    snow_05_list, snow_10_list, snow_20_list = listmaker(df_schneetage)
+    snow_05_list_vgl = DreissigJahreVergleicher(snow_05_list)
+    snow_10_list_vgl = DreissigJahreVergleicher(snow_10_list)
+    snow_20_list_vgl = DreissigJahreVergleicher(snow_20_list)
+
+    snow_maxdate, snow_tagmax = GetMaxValueAndDate(data_snow, "snow")
+
+    print(snow_maxdate)
+    print(snow_tagmax)
+
+    with open("...\db_conn.txt", "r") as file:
+        lines = file.readlines()
+
+    connection_info = {}
+    for line in lines:
+        key, value = line.strip().split("=")
+        connection_info[key] = value
+
+    dbtab_name = connection_info["db_name"]
+    host = connection_info["host"]
+    user = connection_info["user"]
+    password = connection_info["password"]
+    database = connection_info["database"]
+
+    dbtab_name = "klimapass_v2"
+
+
+    print(f"Snow 05: {snow_05_list}")
+    print(f"Snow 05 vgl: {snow_05_list_vgl}")
+
+    print(f"Snow 10: {snow_10_list}")
+    print(f"Snow 10 vgl: {snow_10_list_vgl}")
+
+    print(f"Snow 20: {snow_20_list}")
+    print(f"Snow 20 vgl: {snow_20_list_vgl}")
+
+
+    conn = pymssql.connect(host, user, password, database)
+    cursor = conn.cursor()
+    #todo: snow_maxdate und snow_tagmax auch ergänzen
+    query = f"UPDATE {dbtab_name} SET y_snow_05 = '{snow_05_list}', y_snow_05_vgl = '{snow_05_list_vgl}', y_snow_10 = '{snow_10_list}', y_snow_10_vgl = '{snow_10_list_vgl}', y_snow_20 = '{snow_20_list}', y_snow_20_vgl = '{snow_20_list_vgl}', snow_maxdate = '{snow_maxdate}', snow_tagmax = '{snow_tagmax}'  WHERE Zelle = '{cell_id}'"
+    cursor.execute(query)
+    conn.commit()
+    conn.close()
+

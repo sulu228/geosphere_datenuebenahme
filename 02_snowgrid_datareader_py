@@ -1,0 +1,218 @@
+#from pip._internal import main as pip
+#pip(['install', '--user', 'netCDF4'])
+
+"""
+Skript wurde geschrieben für das erstmalige Erstellen aller Txt-Files. Fürs updaten dieser Daten siehe importnewdata.py
+Skriptbeschreibung ist unter importnewdata.py zu finden
+"""
+
+print("Packages importieren...")
+import netCDF4 as nc
+from scipy import stats
+import numpy as np
+import pandas as pd
+import os
+import datetime
+
+import csv
+
+print("Packages importiert!")
+
+
+fn = r'...\\SNOWGRID-CL_snow_depth_1961.nc'
+ds = nc.Dataset(fn)
+
+print("-------------------------")
+
+prcp = ds["snow_depth"][:]
+lat = ds["lat"][:]
+lon = ds["lon"][:]
+time = ds["time"][:]
+
+# Get Statistics of MaskedArrays
+print("prcp Masked Array Shape: "+str(prcp.shape))
+print("lat Masked Array Shape: "+str(lat.shape))
+print("lon Masked Array Shape: "+str(lon.shape))
+print("Time Masked Array Shape: "+str(time.shape))
+
+#merged_array = np.ma.array(str(lat)+","+str(lon), mask=lat.mask)
+#print(merged_array)
+
+
+## Algemeiner Teil: Zuweisung X und Y für jede Zelle; schauen was in der Steiermark liegt (im Buffer von 500 Meter);
+raw_latlist = []
+raw_lonlist = []
+raw_rrlist = []
+
+for val in lat.compressed():
+    raw_latlist.append(val)
+
+for val in lon.compressed():
+    raw_lonlist.append(val)
+
+for val in prcp.compressed():
+    raw_rrlist.append(val)
+
+print("Länge von raw_latlist: "+str(len(raw_latlist)))
+print("Länge von raw_lonlist: "+str(len(raw_lonlist)))
+
+print("Statistics von raw_latlist: ")
+print(stats.describe(raw_latlist))
+
+print("Statistics von raw_lonlist: ")
+print(stats.describe(raw_lonlist))
+
+latlon_df = pd.DataFrame({'lat': raw_latlist, 'lon': raw_lonlist})
+latlon_df['cell_id'] = range(1, len(latlon_df) + 1)
+
+print(latlon_df)
+
+output_path = r"....\preprocessing"
+output_name = "coords_from_snowgrid.shp"
+output_name_buffer = "bezirksgrenzen_buffer"
+
+def CreatePoint():
+    import arcpy
+    sr = arcpy.SpatialReference(4326)
+    arcpy.Delete_management(output_path+"\\"+output_name)
+    arcpy.CreateFeatureclass_management(out_path=output_path, out_name=output_name, geometry_type="POINT", spatial_reference=sr)
+    arcpy.AddField_management(output_path+"\\"+output_name, "cell_id", "LONG")
+
+    cursor = arcpy.da.InsertCursor(os.path.join(output_path, output_name), ["cell_id", "SHAPE@X", "SHAPE@Y"])
+    for row in zip(latlon_df["cell_id"], latlon_df["lon"], latlon_df["lat"]):
+        cursor.insertRow((row[0], row[1], row[2]))
+    del cursor
+
+    sde_vector = r"...\\Vectordaten.sde"
+    bezirksgrenzen = arcpy.MakeFeatureLayer_management(f'{sde_vector}\\bez', "bezirksgrenzen")
+    arcpy.MakeFeatureLayer_management(output_path+"\\"+output_name, "cells")
+    arcpy.SelectLayerByLocation_management("cells", "INTERSECT", "bezirksgrenzen", "1000 Meters", "NEW_SELECTION")
+
+    listofselectedcellids = []
+
+    for row in arcpy.da.SearchCursor("cells", ["cell_id"]): #will only search through selected records (or all records if none are selected)
+        listofselectedcellids.append(str(row[0]))
+
+    with open(output_path+"\\selected_cellids_snowgrid.txt", "w", encoding="UTF8") as f:
+        f.write(";".join(listofselectedcellids))
+
+# CreatePoint()
+
+result = np.full((329, 584), "000000000000000000000000000000000000000000")
+
+df_cellids_position = pd.DataFrame()
+
+lst_cell_id = []
+lst_lat = []
+lst_lon = []
+lst_i = []
+lst_j = []
+
+counter = 0
+for i in range(len(lat)):
+    for j in range(len(lat[0])):
+        counter = counter + 1
+        result[i][j] = str(counter)+","+str(lat[i][j])+","+str(lon[i][j])
+        lst_cell_id.append(str(counter))
+        lst_lat.append(str(lat[i][j]))
+        lst_lon.append(str(lon[i][j]))
+        lst_i.append(i)
+        lst_j.append(j)
+
+df_cellids_position["cell_id"] = lst_cell_id
+df_cellids_position["lat"] = lst_lat
+df_cellids_position["lon"] = lst_lon
+df_cellids_position["i"] = lst_i
+df_cellids_position["j"] = lst_j
+
+# print(result[313][582])
+# print(df_cellids_position)
+
+# Zusammenbauen timestamps, Tx, Tn, RR in jeweilige TXT-Files
+
+# print(latlon_df) # besteht aus lat lon cell_id
+
+# latlon_df filtern auf cells in der Steiermark
+cell_ids_styria_file = open(output_path+"\\selected_cellids_snowgrid.txt", "r")
+cell_ids_styria = cell_ids_styria_file.read()
+
+cell_ids_styria_list = cell_ids_styria.split(";")
+cell_ids_styria_list = cell_ids_styria_list
+
+cell_ids_styria_list_already_calced = []
+
+def get_files(path):
+    for file in os.listdir(path):
+        if os.path.isfile(os.path.join(path, file)):
+            yield file
+
+for file in get_files(r'...\txt_files\day'):
+    data_length = len(file)
+    if data_length >= 15:
+        id = file[5:11]
+    else:
+        id = file[5:10]
+    cell_ids_styria_list_already_calced.append(id)
+
+
+cell_ids_styria_list = [x for x in cell_ids_styria_list if x not in cell_ids_styria_list_already_calced]
+
+print(cell_ids_styria_list)
+print(len(cell_ids_styria_list))
+# cell_ids_styria_list =
+
+# For-Loop über cell_ids_styrialist # cell_id 1
+def Getdata():
+    for cell in cell_ids_styria_list:
+        if int(cell) <= 55000:
+            print(cell)
+            # get i und j
+            idx = int(cell)-1
+            i_iter = df_cellids_position.iloc[idx]["i"]
+            print(i_iter)
+            j_iter = df_cellids_position.iloc[idx]["j"]
+            print(j_iter)
+            # for loop über Jahre
+            df_output = pd.DataFrame()
+            d_output = []
+            df_output_month = pd.DataFrame()
+            d_output_month = []
+            for year in range(1961, 2023):
+                #### DAILY STATS ######################
+                # RR
+                fn_rr = r'...\snow_grid\\SNOWGRID-CL_snow_depth_'+str(year)+'.nc'
+                ds_rr = nc.Dataset(fn_rr)
+                prcp_rr = ds_rr["snow_depth"][:]
+                time = ds_rr["time"][:]
+
+                # Testabfrage ob überhaupt Werte drinnen sind
+                if str(prcp_rr[0, i_iter, j_iter]) == "--":
+                    print("Keine Werte vorhanden - Cell wird übersprungen!")
+                    break
+
+                for day in range(0, prcp_rr.shape[0]):
+                    datum = datetime.datetime(year, 1, 1) + datetime.timedelta(day)
+                    val_rr = prcp_rr[day, i_iter, j_iter]
+                    print("Time: " + str(datum))
+                    print("cell: " + str(cell)+"; Jahr: " + str(year) + "; i: "+str(i_iter) + "; j: "+str(j_iter) + "; Tag: " + str(day+1)+"; Snow: " + str(val_rr))
+                    try:
+                        val_rr = round(val_rr, 2)
+                    except:
+                        pass
+                    d_output.append(
+                        {
+                            'timestamp': str(datum),
+                            'RR': str(round(float(val_rr),2)),
+                        }
+                    )
+                ################################
+
+                #### MONTHLY STATS #############
+
+            df_output = pd.DataFrame(d_output)
+            np.savetxt(r"...\snow_grid\txt_files\day\snow_"+str(cell)+".txt", df_output.values, fmt="%s", delimiter=";")
+
+        ######################################
+
+
+Getdata()

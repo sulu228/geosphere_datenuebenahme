@@ -1,0 +1,764 @@
+
+"""
+Dieses File bereitet die Daten (txt-Files) so auf, dass die Werte für das Dashboard übernommen werden kann
+Ergebnisse werden in Datenbank geschrieben
+Dieses Skript ist einmal beim Start der Umsetzung durchzuführen
+
+Anzupassen sind: 
+    - Importjahr
+    - Pfade
+"""
+
+
+
+import time as tim
+
+start_total = tim.time()
+start = tim.time()
+
+# import requests, json
+import pandas as pd
+# from pip._internal import main as pip
+# pip(['install', '--user', 'pymssql'])
+# import certifi, csv
+import sys
+import pymssql
+import os
+
+from datetime import datetime
+
+end = tim.time()
+print("Packages importieren: " + str(end-start))
+
+importyear = 2023
+path_to_txt_file = r"...\txt_files\day\\"
+path_to_txt_file_month = r"...\txt_files\month\\"
+
+cell_ids_styria_list = []
+cell_ids_styria_list_already_calced = []
+
+
+def get_files(path):    # Checkt, welche Files in Pfad vorhanden sind
+    for file in os.listdir(path):
+        if os.path.isfile(os.path.join(path, file)):
+            yield file
+
+
+for file in get_files(path_to_txt_file):      # extrahiert die IDs aller Dateien
+    data_length = len(file)
+    if data_length >= 14:
+        id = file[4:10]
+    else:
+        id = file[4:9]
+    cell_ids_styria_list.append(id)
+
+print(cell_ids_styria_list)
+print(len(cell_ids_styria_list))
+
+# Zum testen:
+#
+#cell_ids_styria_list = []
+#cell_ids_styria_list_raw = ['17000', '17418', '17419', '17420', '17421', '17418', '17419', '17420', '17421', '17418', '17419', '17420', '17421', '18002', '18003', '18004', '18005', '18006', '18007', '18587', '18588', '18589', '18590', '18591', '18592', '18593', '18594', '19143', '19144', '19147', '19152', '19153', '19154', '19155', '19156', '19157', '19158', '19159', '19170', '19171', '19172', '19173', '19174', '19175', '19176', '19177', '19178']
+#cell_ids_styria_list_raw = ['18005', '17421', '18002', '18003']
+#for i in cell_ids_styria_list_raw:
+#    if i not in cell_ids_styria_list:
+#        cell_ids_styria_list.append(i)
+
+cnt = 0
+for i in cell_ids_styria_list:      # für jede Cell_id werden berechnungen durchgeführt und dann schlussendlich hochgeladen
+    cell_id = i
+    cnt += 1
+    print(f"Schritt {cnt} von {len(cell_ids_styria_list)}")
+    def createYearArray(start, end):  # Kreiert eine Liste vom Startjahr bis Endjahr
+        yearArray_string = ""
+        yearArray.clear()  # Python 3
+        #yearArray[:] = []  # Python 2
+        for year in range(start, end):
+            yearArray_string = yearArray_string+str(year)+','
+            yearArray.append(year)
+
+        return yearArray_string.rstrip(yearArray_string[-1])
+
+    yearArray = []
+    createYearArray(1961, importyear+1)
+    #createYearArray(1961, importyear)
+    print("Berechnung von 1961 bis "+str(importyear))
+
+    modus = 'txt-files'  # es gibt eigentlich keinen anderen Modus mehr
+
+    if modus == "txt-files":
+        try:
+            txt_file_monthly = path_to_txt_file_month+"\\month_"+str(cell_id)+".txt"
+            if os.path.getsize(txt_file_monthly) == 0:  # schauen ob Datensatz Werte besitzt, sonst überspringen
+                continue
+        except Exception as e:
+            print(e)
+            continue
+
+        data_monthly = pd.read_table(txt_file_monthly, names=['Time', 'Niederschlag', 'Lufttemperatur'], header=None, delimiter=";")
+        try:
+            txt_file_daily = path_to_txt_file+"\\day_" + str(
+                cell_id) + ".txt"
+            if os.path.getsize(txt_file_daily) == 0:    # schauen ob Datensatz Werte besitzt, sonst überspringen
+                continue
+        except Exception as e:
+            print(e)
+            continue
+
+        data_daily = pd.read_table(txt_file_daily, names=['Time', 'Niederschlag', 'Lufttemperatur', 'Lufttemperatur_min'], header=None, delimiter=";")
+
+    if modus == "txt-files":
+        def YearandMonthCalc(row, time_type):   # Funktion für das Extrahieren der Jahre, Monate und Tage aus dem Timestamp
+            if time_type == "Year":
+                val = row["Time"].split("-")[0]
+                return int(val)
+            elif time_type == "Month":
+                val = row["Time"].split("-")[1]
+                return str(val)
+            elif time_type == "Day":
+                val = row["Time"].split("-")[2][:2]
+                return str(val)
+
+
+        data_monthly["Year"] = data_monthly.apply(lambda row: YearandMonthCalc(row, "Year"), axis=1)
+        data_monthly["Month"] = data_monthly.apply(lambda row: YearandMonthCalc(row, "Month"), axis=1)
+
+        data_daily["Year"] = data_daily.apply(lambda row: YearandMonthCalc(row, "Year"), axis=1)
+        data_daily["Month"] = data_daily.apply(lambda row: YearandMonthCalc(row, "Month"), axis=1)
+        data_daily["Day"] = data_daily.apply(lambda row: YearandMonthCalc(row, "Day"), axis=1)
+
+        df_merged_data_tm = data_monthly
+        df_merged_data_tm_daily = data_daily
+
+
+    def MonthRefer(month):
+        # Ziel: Monat als String übergeben, zurück kommt 2-stellige "Monats-ID"
+        month_dic = {'Jänner': '01',
+                     'Februar': '02',
+                     'März': '03',
+                     'April': '04',
+                     'Mai': '05',
+                     'Juni': '06',
+                     'Juli': '07',
+                     'August': '08',
+                     'September': '09',
+                     'Oktober': '10',
+                     'November': '11',
+                     'Dezember': '12'}
+        return month_dic.get(month)
+
+    def MonthReferReverse(monthid):
+        # Ziel: Monat als String übergeben, zurück kommt 2-stellige "Monats-ID"
+        month_dic = {'01': 'Jänner',
+                     '02': 'Februar',
+                     '03': 'März',
+                     '04': 'April',
+                     '05': 'Mai',
+                     '06': 'Juni',
+                     '07': 'Juli',
+                     '08': 'August',
+                     '09': 'September',
+                     '10': 'Oktober',
+                     '11': 'November',
+                     '12': 'Dezember'}
+        return month_dic.get(monthid)
+
+    # ....................................................................................................................
+    # ................. FUNKTIONEN HITZESTATS.............................................................................
+    def sumup_niederschlag(dataframe):
+        winter_list = ['10', '11', '12', '01', '02', '03']  # Winterhalbjahr
+        dataframe["halbjahr"] = dataframe['Month'].apply(lambda x: 'winter' if x in winter_list else 'sommer')      # Aufteilen in Winter- und Sommerhalbjahr
+        dataframe_sommer = dataframe.loc[(dataframe["halbjahr"] == "sommer")]
+        dataframe_sommer_calc = dataframe_sommer.groupby('Year')['Niederschlag'].sum()    # Gesamtniederschlagsmenge Sommer je Jahr
+        dataframe_winter = dataframe.loc[(dataframe["halbjahr"] == "winter")]
+        dataframe_winter_calc = dataframe_winter.groupby('Year')['Niederschlag'].sum()  # Gesamtniederschlagsmenge Winter je Jahr
+        dataframe_jahresniederschlag = dataframe.groupby('Year')['Niederschlag'].sum()  # Gesamtniederschlagsmenge je Jahr
+
+        string_return_jahresniederschlag = ""
+        string_return_winterniederschlag = ""
+        string_return_sommerniederschlag = ""
+        for i, v in dataframe_jahresniederschlag.items():  # da groupby eine series erstellt
+            string_return_jahresniederschlag = string_return_jahresniederschlag + str(round(float(v), 1)) + ","     # Jahreswerte in einer Liste zusammenfügen mit Komma getrennt
+
+        string_return_jahresniederschlag = string_return_jahresniederschlag.rstrip(string_return_jahresniederschlag[-1])    # letztes Komma in der Liste entfernen
+
+        for i, v in dataframe_winter_calc.items():  # da groupby eine series erstellt
+            string_return_winterniederschlag = string_return_winterniederschlag + str(round(float(v), 1)) + ","
+
+        string_return_winterniederschlag = string_return_winterniederschlag.rstrip(string_return_winterniederschlag[-1])
+
+        for i, v in dataframe_sommer_calc.items():  # da groupby eine series erstellt
+            string_return_sommerniederschlag = string_return_sommerniederschlag + str(round(float(v), 1)) + ","
+
+        string_return_sommerniederschlag = string_return_sommerniederschlag.rstrip(string_return_sommerniederschlag[-1])
+
+        return string_return_jahresniederschlag, string_return_winterniederschlag, string_return_sommerniederschlag
+
+
+    def CountMaxTempYear(yeararray_local):
+        d = []
+        # i = 0
+        for year in yeararray_local:  # für jedes Jahr rechnen
+            df_starkniederschl = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Niederschlag'] >= 20)]  # alle Tage rausholen, wo Starkniederschlag (Definition 20mm)
+            df_min20 = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Lufttemperatur_min'] >= 20)]  # Alle Tage wo Mindesttemperatur mehr als 20°C gegeben hat (Tropennacht)
+            df_0 = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Lufttemperatur'] < 0)]     # Alle Tage wo MaxTemper < 0 => Eistag
+            df_15 = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Lufttemperatur'] >= 15)]  # Alle Tage wo MaxTemper größer 15°C
+            df_20 = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Lufttemperatur'] >= 20)]  # Alle Tage wo MaxTemper größer 20°C
+            df_25 = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Lufttemperatur'] >= 25)]  # Alle Tage wo MaxTemper größer 25°C => Sommertag
+            df_30 = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Lufttemperatur'] >= 30)]  # Alle Tage wo MaxTemper grö0er 30°C => Hitzetag
+            df_min0 = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Lufttemperatur_min'] < 0)]  # Frosttag
+            df_35 = df_merged_data_tm_daily[(df_merged_data_tm_daily['Year'] == year) & (df_merged_data_tm_daily['Lufttemperatur'] >= 35)]  # Alle Tage wo MaxTemper grö0er 35°C => Wüstentag
+            d.append(   # in einem Dic zusammenfassen, aus dem später ein DF erstellt wird
+                {
+                    'Year': year,
+                    'starkniederschl': df_starkniederschl.shape[0],
+                    'min20': df_min20.shape[0],
+                    '0': df_0.shape[0],
+                    '15': df_15.shape[0],
+                    '20': df_20.shape[0],
+                    '25': df_25.shape[0],
+                    '30': df_30.shape[0],
+                    'min0': df_min0.shape[0],
+                    '35': df_35.shape[0]
+                }
+            )
+            # i = i + 1
+
+        df_local = pd.DataFrame(d)
+        return df_local
+
+
+    def spezialtage_listmaker(dataframe):
+        # produziert einen String (Liste) Anzahl der Tropentage und Hitzetage sowie Eistage;
+        # Eingangsdaten ist der Dataframe von CountMaxTempYear
+        string_return_starkniederschlag = ""  # Niederschlag >=20
+        string_return_hitzetage = ""  # MAXTemperatur >= 30
+        string_return_sommertage = ""  # MAXTemperatur >= 25
+        string_return_eistage = ""  # MaxTemperatur < 0
+        string_return_tropennacht = ""  # MinTemperatur >= 20
+        string_return_frosttage = ""  # MinTemperatur < 0
+        string_return_wuestentage = "" # MaxTemp >=35
+        for index, row in dataframe.iterrows():  # für Stringliste hinten ein Komma hinzufügen
+            string_return_starkniederschlag = string_return_starkniederschlag + str(row["starkniederschl"]) + ","
+            string_return_hitzetage = string_return_hitzetage + str(row["30"]) + ","
+            string_return_sommertage = string_return_sommertage + str(row["25"]) + ","
+            string_return_eistage = string_return_eistage + str(row["0"]) + ","
+            string_return_tropennacht = string_return_tropennacht + str(row["min20"]) + ","
+            string_return_frosttage = string_return_frosttage + str(row["min0"]) + ","
+            string_return_wuestentage = string_return_wuestentage + str(row["35"]) + ","
+        # Letztes Komma in Stringliste löschen
+        string_return_starkniederschlag = string_return_starkniederschlag.rstrip(string_return_starkniederschlag[-1])
+        string_return_hitzetage = string_return_hitzetage.rstrip(string_return_hitzetage[-1])
+        string_return_sommertage = string_return_sommertage.rstrip(string_return_sommertage[-1])
+        string_return_eistage = string_return_eistage.rstrip(string_return_eistage[-1])
+        string_return_tropennacht = string_return_tropennacht.rstrip(string_return_tropennacht[-1])
+        string_return_frosttage = string_return_frosttage.rstrip(string_return_frosttage[-1])
+        string_return_wuestentage = string_return_wuestentage.rstrip(string_return_wuestentage[-1])
+        return string_return_hitzetage, string_return_sommertage, string_return_eistage, string_return_tropennacht, string_return_starkniederschlag, string_return_frosttage, string_return_wuestentage
+
+    #def spezialtage_listmaker(dataframe):
+    #    string_returns = {}
+    #    for index, row in dataframe.iterrows():
+    #        string_returns["starkniederschlag"] = string_returns.get("starkniederschlag", "") + str(
+    #            row["starkniederschl"]) + ","
+    #        string_returns["hitzetage"] = string_returns.get("hitzetage", "") + str(row["30"]) + ","
+    #        string_returns["sommertage"] = string_returns.get("sommertage", "") + str(row["25"]) + ","
+    #        string_returns["eistage"] = string_returns.get("eistage", "") + str(row["0"]) + ","
+    #        string_returns["tropennacht"] = string_returns.get("tropennacht", "") + str(row["min20"]) + ","
+    #    for key in string_returns:
+    #        string_returns[key] = string_returns[key].rstrip(string_returns[key][-1])
+    #    return string_returns
+
+    def dreissigJahreVergleicher(input_string, datatype="int"):
+        # todo: Perioden ändern und letzten drei Jahre extra
+        # hier werden die Perioden verglichen
+        # Diese Funktion kann mit jeder Stringliste ausgeführt werden
+        input_list = input_string.split(",")
+        if datatype == "float":     # manchmal werden Floats übergeben, manchmal int
+            input_list_convert = list(map(float, input_list))
+        else:
+            input_list_convert = list(map(int, input_list))
+
+        avg_first6190 = round(sum(input_list_convert[0:30])/len(input_list_convert[0:30]), 1)     # Durchschnitt aus 1961-1990 berechnen
+        avg_last9120 = round(sum(input_list_convert[30:60]) / len(input_list_convert[30:60]), 1)    # Durchschnitt aus 1991-2020 berechnen
+        avg_tm3 =  round(input_list_convert[-3])  # aktuell minus 2 Jahre zuvor
+        avg_tm2 =  round(input_list_convert[-2])  # aktuell minus 1 Jahre zuvor
+        avg_tm1 =  round(input_list_convert[-1])  # aktuelles Jahr
+        # todo: ACHTUNG: Wenn sich Perioden ändern, dann auch Periode unter StatsHWPeriode() ändern
+        return str(avg_first6190)+","+str(avg_last9120)+","+str(avg_tm3)+","+str(avg_tm2)+","+str(avg_tm1)     # eine Stringliste wird zurückgeschickt
+
+
+    def GetHinweisTexte(df_cntmaxtemp, df_gesamt):
+        # Meisten Hitzetage in welchem Jahr?
+        jahrmaxtemp = df_cntmaxtemp["30"].max()     # Was ist die Maximalanzahl an Hitzetagen pro Jahr die es bis jetzt gab?
+        jahrmaxn = df_cntmaxtemp[df_cntmaxtemp["30"] == jahrmaxtemp]['Year'].iloc[-1]  # der erstgenannte Wert (im Falle, dass an mehreren Jahren gleich viele heiße Tage gab); in welchem Jahr gab es diese Maximalanzahl an Hitzetage?
+        # HIER
+        # wann gab es die höchsten Temperaturen
+        tagmaxtemp = df_gesamt["Lufttemperatur"].max()
+        tagmax = df_gesamt[df_gesamt["Lufttemperatur"] == tagmaxtemp]["Day"].iloc[-1]    # An welchem Tag kamen diese höchsten Temperaturen zustande?
+        monatmax = df_gesamt[df_gesamt["Lufttemperatur"] == tagmaxtemp]["Month"].iloc[-1]
+        jahrmax = df_gesamt[df_gesamt["Lufttemperatur"] == tagmaxtemp]["Year"].iloc[-1]
+
+        tagmaxniederschl = df_gesamt["Niederschlag"].max()
+        tagmax_ = df_gesamt[df_gesamt["Niederschlag"] == tagmaxniederschl]["Day"].iloc[-1]
+        monatmax_ = df_gesamt[df_gesamt["Niederschlag"] == tagmaxniederschl]["Month"].iloc[-1]
+        jahrmax_ = df_gesamt[df_gesamt["Niederschlag"] == tagmaxniederschl]["Year"].iloc[-1]
+
+        # an welchem Tag kamen die niedrigsten Temperaturen zustande?
+        tagmintemp = df_gesamt["Lufttemperatur"].min()
+        tagmmin = df_gesamt[df_gesamt["Lufttemperatur"] == tagmintemp]["Day"].iloc[-1]
+        monatmin = df_gesamt[df_gesamt["Lufttemperatur"] == tagmintemp]["Month"].iloc[-1]
+        jahrmin = df_gesamt[df_gesamt["Lufttemperatur"] == tagmintemp]["Year"].iloc[-1]
+
+        # todo: Hier noch doppelte Werte behandeln
+        datummax = str(tagmax)+"."+str(monatmax)+"."+str(jahrmax)   # das Jahr formatieren wie gewünscht
+        datummax_niederschl = str(tagmax_)+"."+str(monatmax_)+"."+str(jahrmax_)
+
+        datummin = str(tagmmin)+"."+str(monatmin)+"."+str(jahrmin)   # das Jahr formatieren wie gewünscht
+
+        return jahrmaxn, jahrmaxtemp, datummax, tagmaxtemp, datummax_niederschl, tagmaxniederschl, datummin, tagmintemp
+
+
+    def Trockenperiode(df_gesamt):
+        print("Trockenperiode starten")
+        df_lokal = df_gesamt[['Time', 'Niederschlag']].copy()
+        trockenperioden = []
+        aktuelle_trockenperiode = None
+        print("Durch DF iterrieren")
+        # for index, row in df_gesamt.iterrows():
+        for row in df_lokal.itertuples():
+            if row[2] <= 1:
+                if aktuelle_trockenperiode is None:
+                    aktuelle_trockenperiode = []
+                else:
+                    aktuelle_trockenperiode.append(row[1])
+            else:
+                if aktuelle_trockenperiode is not None:
+                    trockenperioden.append(aktuelle_trockenperiode)
+                    aktuelle_trockenperiode = None
+
+        if aktuelle_trockenperiode is not None:
+            trockenperioden.append(aktuelle_trockenperiode)
+
+        print("Datenaufbereitung")
+        # Absolut längste Trockenperiode in der Geschichte bestimmen
+        max_trockenperiode = max(trockenperioden, key=len)
+        print(max_trockenperiode)
+        # todo: Time zu echtem Time machen
+
+        start_datum = max_trockenperiode[0]
+        end_datum = max_trockenperiode[-1]
+
+        start_datum = datetime.strptime(start_datum, '%Y-%m-%d %H:%M:%S')
+        end_datum = datetime.strptime(end_datum, '%Y-%m-%d %H:%M:%S')
+
+        start_datum_string = start_datum.strftime('%d.%m.%Y')
+        end_datum_string = end_datum.strftime('%d.%m.%Y')
+
+        laenge = len(max_trockenperiode)
+        # print(f"Die längste Trockenperiode in der Geschichte begann am {start_datum:%d}.{start_datum:%m}.{start_datum.year} und endete am {end_datum:%d}.{end_datum:%m}.{end_datum.year}. Sie dauerte insgesamt {laenge} Tage.")
+        return start_datum_string, end_datum_string, laenge
+
+
+    def CalcHitzewelle(df_gesamt):
+        # Hitzewellen-Tage berechnen
+        # Definition Hitzewelle:
+        # Eine für Mitteleuropa verwendete Methode der Auswertung geht auf den tschechischen Meteorologen Jan Kysely zurück, diese Tage der Hitzewelle werden Kysely-Tag genannt
+        # „Eine Hitzewelle wird festgestellt, sobald an mindestens drei Tagen in Folge die Maximaltemperatur 30 °C überschreitet und hält so lange an, wie die mittlere Maximaltemperatur über die gesamte Periode über 30 °C bleibt und an keinem Tag eine Maximaltemperatur von 25 °C unterschritten wird.“
+        df = df_gesamt
+        df.loc[df["Lufttemperatur"] > 30, "hw_temp"] = 1    # Initialisieren: Temporärer Wert =>  Wenn größer 30, dann zumindest mal ein Hitzetag
+        df.loc[df["Lufttemperatur"] <= 30, "hw_temp"] = 0
+        df["hw"] = 0    # Hitzewellen-Wert anfangs auf 0 setzen
+        df_len = len(df)    # wird gebraucht, damit später nicht über die Länge des DFs indexiert wird => wirft ein Error
+        templist = []
+
+        for row in df.itertuples():     # durch alle Reihen durchiterieren
+            index = row[0]
+            if index <= df_len-2 and index >= 1:  # weil zwei Indezes nach vorne und eines nach hinten gesprungen wird
+                if df.loc[index, "hw_temp"] == 1 and df.loc[index+1, "hw_temp"] == 1 and df.loc[index+2, "hw_temp"] == 1 and df.loc[index, "hw"] == 0:  # wenn Tag, Tag+1 und Tag+2 über 30 Grad haben und Hitzewellen-Wert noch bei 0 ist, dann...
+                    df.loc[index, "hw"] = 1     # an allen drei Tagen die Hitzewelle auf 1 setzen
+                    df.loc[index+1, "hw"] = 1
+                    df.loc[index+2, "hw"] = 1
+                elif df.loc[index-1, "hw"] == 1 and df.loc[index, "Lufttemperatur"] > 25:   # wenn gestriger Tag Hitzewelle war, und der heutige Tag > 25°C, dann ist auch dieser Tag eine Hitzewelle, vorausgesetzt der Durchschnitt ist größer 30 => das wird später gecheckt
+                    df.loc[index, "hw"] = 1
+                else:
+                    pass
+
+                if df.loc[index, "hw"] == 1:  # geht sicher, dass Durchschnitt über 30 liegt
+                    templist.append(df.loc[index, "Lufttemperatur"])    # temperatur des heutigen Tages in templist hinzufügen
+                    average = round(sum(templist) / len(templist), 2)   # Durchschnittstemperatur der templiste berechnen
+                    if average <= 30:   # wenn Durchschnitt kleiner 30 dann wieder Tag auf nicht-Hitzewellentag setzen
+                        df.loc[index, "hw"] = 0
+                        # templist.clear()
+                        templist[:] = []  # Python 2 => Templist leeren
+                else:   # wenn heutiger Tag sowieso kein Hitzewellentag, dann gleich leeren
+                    templist[:] = []  # Python 2
+        return df   # Hitzewellen-DF return
+
+    def CalcHitzewelleDauer(df, yearsarray):
+        # Anzahl HWs und AvgDauerHWS berechnen
+        templist = []
+        counter = 0
+        df_hwdauer = pd.DataFrame()
+        for year in yearsarray: # durch alle Jahre durchgehen und Statistiken berechnen
+            # templist.clear()
+            templist[:] = []  # Python 2
+            merged_data = {}
+            df_filtered = df[df['Year'] == year].reset_index(drop=True)  # neuen Index generieren
+            # Anzahl der Hitzewellen; Dauer der Hitzewellen
+            for index, day in df_filtered.iterrows():   # durch alle Tage durchiterieren
+                if index > 0:  # weil index-1 abgegriffen wird; sonst Error
+                    if df_filtered.loc[index, "hw"] == 1:   # wenn Tag ein Hitzewellentag ist, dann counter + 1
+                        counter = counter + 1
+                    elif df_filtered.loc[index, "hw"] == 0 and df_filtered.loc[index-1, "hw"] == 1:  # wenn Hitzewelle aufhört, dann Counter in templiste hinzufügen  => so bekommt man Länge der Hitzewelle raus
+                        templist.append(counter)
+                        counter = 0
+                    else:
+                        counter = 0
+            anzahlhws = len(templist)   # Die Anzahl der Hitzewellen wird aus der Länge der Liste ermittelt
+            if anzahlhws == 0:  # wenn keine Hitzewellen, dann auch Durchschnitt auf 0 setzen
+                avgdauerhws = 0
+            else:  # da sonst Division by Zero
+                avgdauerhws = sum(templist) / anzahlhws     # durchschnittliche Dauer Hitzewelle
+            merged_data = {'Year': year, 'AnzahlHWs': anzahlhws, 'AvgDauerHWs': avgdauerhws}    # Dictionary erstellen, um dann daraus DF zu erstellen
+            df_hwdauer = df_hwdauer.append(merged_data, ignore_index=True)
+        # Daraus nun ein Diagramm machen mit Anzahl HWS und AvgDauerHWs
+        return df_hwdauer
+
+    def StatsHWPeriode(df, yeararray):
+        # Hitzewellen Perioden werden verglichen
+        df['temp'] = df['AnzahlHWs'] * df['AvgDauerHWs']    # Hitzewellendauer je Hitzewelle berechnen, um später die Durchschnittliche Dauer über die Perioden zu berechnen
+        array_n_hw_1961 = []
+        array_n_hw_2021 = []
+        array_dauer_hw_1961 = []
+        array_dauer_hw_2021 = []
+        string_return_anzahlhws = ""
+        string_return_avgdauerhws = ""
+        for index, hw in df.iterrows():     # durch alle Hitzewellen durchgehen
+            # todo: Perioden ändern
+            if df.loc[index, 'Year'] <= 1991:   # Aufteilung in 1961-1991 und die letzten 30 Jahren
+                array_dauer_hw_1961.append(df.loc[index, 'temp'])
+                array_n_hw_1961.append(df.loc[index, 'AnzahlHWs'])
+            elif df.loc[index, 'Year'] >= max(yeararray)-30:    # die letzten 30 Jahren...
+                array_dauer_hw_2021.append(df.loc[index, 'temp'])
+                array_n_hw_2021.append(df.loc[index, 'AnzahlHWs'])
+            # Liste erstellen mit Infos für alle Jahre
+            string_return_anzahlhws = string_return_anzahlhws + str(int(hw["AnzahlHWs"])) + ","     # Stringlisten erstellen
+            string_return_avgdauerhws = string_return_avgdauerhws + str(round(hw["AvgDauerHWs"], 1)) + ","
+
+        string_return_anzahlhws = string_return_anzahlhws.rstrip(string_return_anzahlhws[-1])   # letztes Komma löschen
+        string_return_avgdauerhws = string_return_avgdauerhws.rstrip(string_return_avgdauerhws[-1]) # letztes Komma löschen
+        try:    # falls es keine Hitzewellen gab
+            anzahlHWsanno1961 = round(sum(array_n_hw_1961)/len(array_n_hw_1961), 1)  # durschnittliche Anzahl über Periode rechnen
+            anzahlHWsanno2021 = round(sum(array_n_hw_2021)/len(array_n_hw_2021), 1)
+        except Exception as e:
+            anzahlHWsanno1961 = 0
+            anzahlHWsanno2021 = 0
+            print(e)
+        if anzahlHWsanno1961 == 0:  # damit
+            dauerHWsanno1961 = 0
+        else:
+            dauerHWsanno1961 = round(sum(array_dauer_hw_1961) / sum(array_n_hw_1961), 1)
+        if anzahlHWsanno2021 == 0:
+            dauerHWsanno2021 = 0
+        else:
+            dauerHWsanno2021 = round(sum(array_dauer_hw_2021)/sum(array_n_hw_2021), 1)
+
+        return anzahlHWsanno1961, anzahlHWsanno2021, dauerHWsanno1961, dauerHWsanno2021, string_return_anzahlhws, string_return_avgdauerhws
+
+    #df_merged_data_tm => Lufttemperatur; Niederschlag; Year; Month
+    def Anomalies(dataframe, periode_start, periode_end, yeararray):
+        # Anomalien berechnen basierend auf den "Durchschnitt" periode_start bis periode_end
+        # Monats DF rein; durchschnitt der Temperaturen je Monat bzw. Jahr zwischen 1971-2000 rechnen; anomalien je Jahr und Monaten berechnen
+        maxjahr = max(yeararray)
+        dataframe_filtered = dataframe.loc[(dataframe.Year <= maxjahr)]     # bringt sich eigentlich nix
+        df_schnitt_year_gesamt = dataframe_filtered.loc[(dataframe_filtered.Year >= periode_start) & (dataframe_filtered.Year <= periode_end)]  # Filtern auf Year 1971 bis 2000
+        jahresschnitt_temp_monthly = df_schnitt_year_gesamt.groupby('Month').mean()     # monatlichen Durchschnitt rechnen
+        jahresschnitt_temp_monthly["Month_new"] = jahresschnitt_temp_monthly.index      # da der Monat durch groupby zum index wird, muss eine neue Spalte für Monat berechnet werden
+
+        # Monatsanomalien berechnen
+        for index, row in dataframe_filtered.iterrows():    # durch alle Monate durchiterieren und Anomalien berechnen
+            anomaly_value_temp = round(jahresschnitt_temp_monthly.loc[(jahresschnitt_temp_monthly.Month_new == row.Month)]["Lufttemperatur"][0], 2)
+            anomaly_value_niederschl = round(jahresschnitt_temp_monthly.loc[(jahresschnitt_temp_monthly.Month_new == row.Month)]["Niederschlag"][0], 2)
+            temp_anomaly = row.Lufttemperatur - anomaly_value_temp  # Differenz zwischen Monatslufttemperatur und des Wertes zwischen periode_start und periode_end
+            niederschl_anomaly = row.Niederschlag - anomaly_value_niederschl    # Differenz zwischen Monatsniederschlag und des Wertes zwischen periode_start und periode_end
+            dataframe_filtered.loc[index, 'temp_anomaly'] = round(temp_anomaly, 1)  # Anomalien je Monat verspeichern
+            dataframe_filtered.loc[index, 'niederschl_anomaly'] = round(niederschl_anomaly, 1)  # Anomalien je Monat verspeichern
+
+        # Jahresanomalien berechnen:
+        dataframe_filtered_yearly = dataframe_filtered.groupby('Year').agg(
+            {'Niederschlag': 'sum', 'Lufttemperatur': 'mean'})
+        dataframe_filtered_yearly["Year_new"] = dataframe_filtered_yearly.index
+        print(dataframe_filtered_yearly)
+        df_schnitt_year_gesamt_yearly = dataframe_filtered_yearly.loc[
+            (dataframe_filtered_yearly.Year_new >= periode_start) & (dataframe_filtered_yearly.Year_new <= periode_end)]
+
+        anomaly_value_temp_yearly = round(df_schnitt_year_gesamt_yearly["Lufttemperatur"].mean(),2)
+        anomaly_value_niederschl_yearly = round(df_schnitt_year_gesamt_yearly["Niederschlag"].mean(),2)
+
+        for index, row in dataframe_filtered_yearly.iterrows():
+            temp_anomaly = row.Lufttemperatur - anomaly_value_temp_yearly
+            niederschl_anomaly = row.Niederschlag - anomaly_value_niederschl_yearly
+            dataframe_filtered_yearly.loc[index, 'temp_anomaly'] = round(temp_anomaly, 1)
+            dataframe_filtered_yearly.loc[index, 'niederschl_anomaly'] = round(niederschl_anomaly, 1)
+
+        return dataframe_filtered, dataframe_filtered_yearly
+
+    dataframe_anomalies, dataframe_anomalies_yearly = Anomalies(df_merged_data_tm, 1991, 2020, yearArray)  # von 1971 auf 1991 und 2000 auf 2020 ändern!!
+
+        # Jahresanomalien berechnen
+        #dataframe_year = dataframe.groupy('Year').mean()
+
+    def Stringmaker(dataframe, month):
+        # macht Stringlist von Anomalien dataframe für jeden Monat
+        str_return_temp = ""
+        str_return_niederschl = ""
+        if month != "year":
+            dataframe_filter = dataframe.loc[(dataframe.Month == month)]
+        else:
+            dataframe_filter = dataframe
+        for index, row in dataframe_filter.iterrows():
+            str_return_temp = str_return_temp + str(row["temp_anomaly"]) + ','
+            str_return_niederschl = str_return_niederschl + str(row["niederschl_anomaly"]) + ','
+        str_return_temp = str_return_temp.rstrip(str_return_temp[-1])  # letztes Komma löschen
+        str_return_niederschl = str_return_niederschl.rstrip(str_return_niederschl[-1])  # letztes Komma löschen
+        return str_return_temp, str_return_niederschl
+
+
+    def Monthstats(dataframe_month_stats):
+        string_returns = {}
+        lst_month = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+        for m in lst_month:
+            dataframe_month_stats_filtered = dataframe_month_stats.loc[dataframe_month_stats['Month'] == m]
+            temp_list_niederschlag = dataframe_month_stats_filtered["Niederschlag"].to_list()
+            temp_list_temp = dataframe_month_stats_filtered["Lufttemperatur"].to_list()
+            temp_str_niederschlag = ','.join(str(x) for x in temp_list_niederschlag)
+            temp_str_temp = ','.join(str(x) for x in temp_list_temp)
+
+            string_returns["niederschl_"+m] = temp_str_niederschlag
+            string_returns["temp_"+m] = temp_str_temp
+
+        return string_returns
+
+
+    def YearStats(df_merged_data_tm):
+        string_returns = {}
+        dataframe_year_stats_filtered = df_merged_data_tm.groupby('Year').agg(
+            {'Niederschlag': 'sum', 'Lufttemperatur': 'mean'})
+        temp_list_niederschlag = round(dataframe_year_stats_filtered["Niederschlag"],1).to_list()
+        temp_list_temp = round(dataframe_year_stats_filtered["Lufttemperatur"],1).to_list()
+        temp_str_niederschlag = ','.join(str(x) for x in temp_list_niederschlag)
+        temp_str_temp = ','.join(str(x) for x in temp_list_temp)
+
+        string_returns["niederschl_year"] = temp_str_niederschlag
+        string_returns["temp_year"] = temp_str_temp
+        return string_returns
+    # .....................................................................................................................
+    # Python-Code für Hitzestatistiken
+
+    start = tim.time()
+    df_cntMaxTemp = CountMaxTempYear(yearArray)
+    #print(df_cntMaxTemp)
+    end = tim.time()
+    #print("df_cntMaxTemp: " + str(end-start))
+
+    start = tim.time()
+    df_hitzwelle = CalcHitzewelle(df_merged_data_tm_daily)
+    end = tim.time()
+    #print("df_hitzwelle: " + str(end-start))
+
+    start = tim.time()
+    df_hwstats = CalcHitzewelleDauer(df_hitzwelle, yearArray)
+    end = tim.time()
+    #print("df_hwstats: " + str(end-start))
+
+    year_maxHT, n_date_maxHT, date_maxTemp, val_date_maxTemp, date_maxNiederschl, val_date_maxNiederschl, date_minTemp, val_date_minTemp  = GetHinweisTexte(df_cntMaxTemp, df_merged_data_tm_daily)
+    n_HW_before2000, n_HW_after2000, dauer_HW_before2000, dauer_HW_after2000, y_n_hws, y_dauer_hws = StatsHWPeriode(df_hwstats, yearArray)
+
+    start_year = 1961
+    end_year = importyear+1
+    x_jahre = createYearArray(start_year, end_year)
+
+    y_hitzetage, y_sommertage, y_eistage, y_tropennaechte, y_starkniederschlag, y_frosttage, y_wuestentage = spezialtage_listmaker(CountMaxTempYear(yearArray))
+    y_jahresniederschlag, y_winterniederschlag, y_sommerniederschlag = sumup_niederschlag(df_merged_data_tm)
+
+    y_trockenheit_start, y_trockenheit_end, y_trockenheit_laenge = Trockenperiode(df_merged_data_tm_daily)
+
+    y_hitzetage_vgl = dreissigJahreVergleicher(y_hitzetage)
+    y_sommertage_vgl = dreissigJahreVergleicher(y_sommertage)
+    y_eistage_vgl = dreissigJahreVergleicher(y_eistage)
+    y_tropennaechte_vgl = dreissigJahreVergleicher(y_tropennaechte)
+    y_starkniederschlag_vgl = dreissigJahreVergleicher(y_starkniederschlag, "float")
+    y_jahresniederschlag_vgl = dreissigJahreVergleicher(y_jahresniederschlag, "float")
+    y_winterniederschlag_vgl = dreissigJahreVergleicher(y_winterniederschlag, "float")
+    y_sommerniederschlag_vgl = dreissigJahreVergleicher(y_sommerniederschlag, "float")
+    y_frosttage_vgl = dreissigJahreVergleicher(y_frosttage, "float")
+    y_wuestentage_vgl = dreissigJahreVergleicher(y_wuestentage, "float")
+
+    y_temp_anomaly_01, y_niederschl_anomaly_01 = Stringmaker(dataframe_anomalies, '01')
+    y_temp_anomaly_02, y_niederschl_anomaly_02 = Stringmaker(dataframe_anomalies, '02')
+    y_temp_anomaly_03, y_niederschl_anomaly_03 = Stringmaker(dataframe_anomalies, '03')
+    y_temp_anomaly_04, y_niederschl_anomaly_04 = Stringmaker(dataframe_anomalies, '04')
+    y_temp_anomaly_05, y_niederschl_anomaly_05 = Stringmaker(dataframe_anomalies, '05')
+    y_temp_anomaly_06, y_niederschl_anomaly_06 = Stringmaker(dataframe_anomalies, '06')
+    y_temp_anomaly_07, y_niederschl_anomaly_07 = Stringmaker(dataframe_anomalies, '07')
+    y_temp_anomaly_08, y_niederschl_anomaly_08 = Stringmaker(dataframe_anomalies, '08')
+    y_temp_anomaly_09, y_niederschl_anomaly_09 = Stringmaker(dataframe_anomalies, '09')
+    y_temp_anomaly_10, y_niederschl_anomaly_10 = Stringmaker(dataframe_anomalies, '10')
+    y_temp_anomaly_11, y_niederschl_anomaly_11 = Stringmaker(dataframe_anomalies, '11')
+    y_temp_anomaly_12, y_niederschl_anomaly_12 = Stringmaker(dataframe_anomalies, '12')
+    y_temp_anomaly_year, y_niederschl_anomaly_year = Stringmaker(dataframe_anomalies_yearly, 'year')
+
+    print("STRINGS:")
+    print(y_temp_anomaly_year)
+    print(y_niederschl_anomaly_year)
+
+    # Check if dauer_HW_before2000 is nan
+
+    #print("year_maxHT = " + str(year_maxHT))
+    #print("n_date_maxHT = " + str(n_date_maxHT))
+    #print("date_maxTemp = " + str(date_maxTemp))
+    #print("val_date_maxTemp = " + str(val_date_maxTemp))
+
+    #print("n_HW_before2000 = " + str(n_HW_before2000))
+    #print("n_HW_after2000 = " + str(n_HW_after2000))
+    #print("dauer_HW_before2000 = " + str(dauer_HW_before2000))  
+    #print("dauer_HW_after2000 = " + str(dauer_HW_after2000))    
+
+    #print("x_jahre = " + str(x_jahre))
+    #print("y_hitzetage = " + str(y_hitzetage))
+    #print("y_hitzetage_vgl = " + str(y_hitzetage_vgl))
+    #print("y_sommertage = " + str(y_sommertage))
+    #print("y_sommertage_vgl = " + str(y_sommertage_vgl))
+    #print("y_eistage = " + str(y_eistage))
+    #print("y_eistage_vgl = " + str(y_eistage_vgl))
+    #print("y_tropennaechte = " + str(y_tropennaechte))
+    #print("y_tropennaechte_vgl = " + str(y_tropennaechte_vgl))
+    #print("y_starkniederschlag = " + str(y_starkniederschlag))
+    #print("y_starkniederschlag_vgl = " + str(y_starkniederschlag_vgl))
+
+    #print("y_jahresniederschlag = " + str(y_jahresniederschlag))
+    #print("y_jahresniederschlag_vgl = " + str(y_jahresniederschlag_vgl))
+    #print("y_winterniederschlag = " + str(y_winterniederschlag))
+    #print("y_winterniederschlag_vgl = " + str(y_winterniederschlag_vgl))
+    #print("y_sommerniederschlag = " + str(y_sommerniederschlag))
+    #print("y_sommerniederschlag_vgl = " + str(y_sommerniederschlag_vgl))
+
+    """print("y_temp_anomaly_01 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_02 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_03 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_04 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_05 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_06 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_07 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_08 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_09 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_10 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_11 = " + str(y_temp_anomaly_01))
+    print("y_temp_anomaly_12 = " + str(y_temp_anomaly_01))
+
+    print("y_niederschl_anomaly_01 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_02 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_03 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_04 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_05 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_06 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_07 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_08 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_09 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_10 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_11 = " + str(y_niederschl_anomaly_01))
+    print("y_niederschl_anomaly_12 = " + str(y_niederschl_anomaly_01))
+
+    print("y_n_hws = " + str(y_n_hws))
+    print("y_dauer_hws = " + str(y_dauer_hws))"""
+
+
+    dbtab_name="klimapass_v2"
+    host = '...'
+    user = '...'
+    password = '...'
+    database = '...'
+
+    conn = pymssql.connect(host, user, password, database)
+    cursor = conn.cursor()
+    # todo: Abfragen machen wie # query = f"INSERT INTO {database_i} ({','.join(monthstats.keys())}) VALUES ({values}) WHERE Zelle = '"+cell_id+"'"  // values = ','.join(["'{}'".format(x) for x in monthstats.values()])
+    query = "INSERT INTO "+dbtab_name+" (Zelle,year_maxHT,n_date_maxHT,date_maxTemp,val_date_maxTemp,n_HW_before2000,n_HW_after2000,dauer_HW_before2000,dauer_HW_after2000,x_jahre,y_hitzetage,y_sommertage,y_eistage,y_tropennaechte,y_starkniederschlag,y_jahresniederschlag,y_winterniederschlag,y_sommerniederschlag,y_hitzetage_vgl,y_sommertage_vgl,y_eistage_vgl,y_tropennaechte_vgl,y_starkniederschlag_vgl,y_jahresniederschlag_vgl,y_winterniederschlag_vgl,y_sommerniederschlag_vgl,y_n_hws,y_dauer_hws,y_temp_anomaly_01 ,y_temp_anomaly_02,y_temp_anomaly_03,y_temp_anomaly_04,y_temp_anomaly_05,y_temp_anomaly_06,y_temp_anomaly_07,y_temp_anomaly_08,y_temp_anomaly_09,y_temp_anomaly_10,y_temp_anomaly_11,y_temp_anomaly_12,y_niederschl_anomaly_01,y_niederschl_anomaly_02,y_niederschl_anomaly_03,y_niederschl_anomaly_04,y_niederschl_anomaly_05,y_niederschl_anomaly_06,y_niederschl_anomaly_07,y_niederschl_anomaly_08,y_niederschl_anomaly_09,y_niederschl_anomaly_10,y_niederschl_anomaly_11,y_niederschl_anomaly_12,y_frosttage, y_frosttage_vgl)" \
+                                      " VALUES ('"+str(cell_id)+"','"+str(year_maxHT)+"','"+str(n_date_maxHT)+"','"+str(date_maxTemp)+"','"+str(val_date_maxTemp)+"','"+str(n_HW_before2000)+"','"+str(n_HW_after2000)+"','"+str(dauer_HW_before2000)+"','"+str(dauer_HW_after2000)+"','"+str(x_jahre)+"'" \
+                                      ",'"+str(y_hitzetage)+"','"+str(y_sommertage)+"','"+str(y_eistage)+"','"+str(y_tropennaechte)+"','"+str(y_starkniederschlag)+"','"+str(y_jahresniederschlag)+"','"+str(y_winterniederschlag)+"','"+str(y_sommerniederschlag)+"','"+str(y_hitzetage_vgl)+"','"+str(y_sommertage_vgl)+"'" \
+                                       ",'"+str(y_eistage_vgl)+"','"+str(y_tropennaechte_vgl)+"','"+str(y_starkniederschlag_vgl)+"','"+str(y_jahresniederschlag_vgl)+"','"+str(y_winterniederschlag_vgl)+"','"+str(y_sommerniederschlag_vgl)+"','"+str(y_n_hws)+"','"+str(y_dauer_hws)+"','"+str(y_temp_anomaly_01)+"','"+str(y_temp_anomaly_02)+"'"\
+                                    ",'"+str(y_temp_anomaly_03)+"','"+str(y_temp_anomaly_04)+"','"+str(y_temp_anomaly_05)+"','"+str(y_temp_anomaly_06)+"','"+str(y_temp_anomaly_07)+"','"+str(y_temp_anomaly_08)+"','"+str(y_temp_anomaly_09)+"','"+str(y_temp_anomaly_10)+"','"+str(y_temp_anomaly_11)+"','"+str(y_temp_anomaly_12)+"'"\
+                                    ",'"+str(y_niederschl_anomaly_01)+"','"+str(y_niederschl_anomaly_02)+"','"+str(y_niederschl_anomaly_03)+"','"+str(y_niederschl_anomaly_04)+"','"+str(y_niederschl_anomaly_05)+"','"+str(y_niederschl_anomaly_06)+"','"+str(y_niederschl_anomaly_07)+"','"+str(y_niederschl_anomaly_08)+"','"+str(y_niederschl_anomaly_09)+"','"+str(y_niederschl_anomaly_10)+"'"\
+                                    ",'"+str(y_niederschl_anomaly_11)+"','"+str(y_niederschl_anomaly_12)+"','"+str(y_frosttage)+"','"+str(y_frosttage_vgl)+"');"
+    print(query)
+    cursor.execute(query)
+
+
+
+    ####### Niederschlags- und Temperaturmonatswerte hochladen auf DB
+    def Uploadmonthstats(cursor_i, database_i):
+        monthstats = Monthstats(df_merged_data_tm)
+        update_query = "UPDATE "+database_i+" SET " + ', '.join([f"{key} = '{value}'" for key, value in monthstats.items()]) + " WHERE Zelle = '"+cell_id+"'"
+        cursor_i.execute(update_query)
+
+    Uploadmonthstats(cursor, dbtab_name)
+    conn.commit()
+    #conn.close()
+
+    ####### Jahresanomalien und -entwicklungen Niederschlag und Temperaturen hochladen auf DB
+    def UploadYearstats(cursor_i, database_i, temp_anomaly, niederschl_anomaly):
+        yearstats = YearStats(df_merged_data_tm)
+        update_query = "UPDATE "+database_i+" SET " + ', '.join([f"{key} = '{value}'" for key, value in yearstats.items()]) + " WHERE Zelle = '"+cell_id+"'"
+        cursor_i.execute(update_query)
+        update_query_2 = "UPDATE "+database_i+" SET y_niederschl_year_anomaly = '"+str(niederschl_anomaly)+"', y_temp_year_anomaly = '"+str(temp_anomaly)+"' WHERE Zelle = '"+cell_id+"'"
+        cursor_i.execute(update_query_2)
+
+        # Frosttage updaten
+        update_query_3 = "UPDATE "+database_i+" SET y_frosttage = '"+str(y_frosttage)+"', y_frosttage_vgl = '"+str(y_frosttage_vgl)+"' WHERE Zelle = '"+cell_id+"'"
+        cursor_i.execute(update_query_3)
+
+    UploadYearstats(cursor, dbtab_name, y_temp_anomaly_year, y_niederschl_anomaly_year)
+
+    def Uploadmonthstats(cursor_i, database_i, temp_anomaly, niederschl_anomaly):
+        yearstats = YearStats(df_merged_data_tm)
+        update_query = "UPDATE "+database_i+" SET " + ', '.join([f"{key} = '{value}'" for key, value in yearstats.items()]) + " WHERE Zelle = '"+cell_id+"'"
+        cursor_i.execute(update_query)
+        update_query_2 = "UPDATE "+database_i+" SET y_niederschl_anomaly_01 = '"+str(niederschl_anomaly)+"', y_temp_anomaly_01 = '"+str(temp_anomaly)+"' WHERE Zelle = '"+cell_id+"'"
+        cursor_i.execute(update_query_2)
+
+        # Frosttage updaten
+        update_query_3 = "UPDATE "+database_i+" SET y_frosttage = '"+str(y_frosttage)+"', y_frosttage_vgl = '"+str(y_frosttage_vgl)+"' WHERE Zelle = '"+cell_id+"'"
+        cursor_i.execute(update_query_3)
+
+    UploadYearstats(cursor, dbtab_name, y_temp_anomaly_year, y_niederschl_anomaly_year)
+
+    Uploadmonthstats(cursor, dbtab_name, y_temp_anomaly_01, y_niederschl_anomaly_01)
+
+    def UploadNiederschlMax(cursor_i, database_i, datum, value):
+        update_query = "UPDATE "+database_i+" SET date_maxNiederschl = '"+str(datum)+"', val_date_maxNiederschl = '"+str(value)+"' WHERE Zelle = '"+cell_id+"'"
+        cursor_i.execute(update_query)
+
+    def Upload_Trockenheit(cursor_i, database_i):
+        print("Trockenheit hochladen")
+        update_query = "UPDATE " + database_i + f" SET trockenheit = '{y_trockenheit_start};{y_trockenheit_end};{y_trockenheit_laenge}' WHERE Zelle = '" + cell_id + "'"
+        cursor_i.execute(update_query)
+
+    def Upload_minTemp(cursor_i, database_i):
+        print("Minimaltemperatur hochladen")
+        update_query = f"UPDATE {database_i} SET date_minTemp = '{date_minTemp}', val_date_minTemp = '{val_date_minTemp}' WHERE Zelle = '{cell_id}'"
+        cursor_i.execute(update_query)
+
+    def Upload_Wuestentag(cursor_i, database_i):
+        update_query = f"UPDATE {database_i} SET y_wuestentage = '{y_wuestentage}', y_wuestentage_vgl = '{y_wuestentage_vgl}' WHERE Zelle = '{cell_id}'"
+        cursor_i.execute(update_query)
+
+    UploadNiederschlMax(cursor, dbtab_name, date_maxNiederschl, val_date_maxNiederschl)
+    Upload_Trockenheit(cursor, dbtab_name)
+    Upload_minTemp(cursor, dbtab_name)
+    Upload_Wuestentag(cursor, dbtab_name)
+    conn.commit()
+    conn.close()
+    print("JETZT KOMMT DF:")
+    print(dataframe_anomalies.columns.tolist())
+
+    print("-- FIN --")
